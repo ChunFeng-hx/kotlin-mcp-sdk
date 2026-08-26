@@ -57,6 +57,17 @@ public final class io/modelcontextprotocol/kotlin/sdk/client/ClientOptions : io/
 	public final fun getCapabilities ()Lio/modelcontextprotocol/kotlin/sdk/types/ClientCapabilities;
 }
 
+public abstract interface class io/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSink {
+	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun flush (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun write (Lkotlinx/io/Buffer;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public abstract interface class io/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSource {
+	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun readAtMostTo (Lkotlinx/io/Buffer;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
 public final class io/modelcontextprotocol/kotlin/sdk/client/KtorClientKt {
 	public static final fun mcpSse-BZiP2OM (Lio/ktor/client/HttpClient;Ljava/lang/String;Lkotlin/time/Duration;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun mcpSse-BZiP2OM$default (Lio/ktor/client/HttpClient;Ljava/lang/String;Lkotlin/time/Duration;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
@@ -83,6 +94,11 @@ public final class io/modelcontextprotocol/kotlin/sdk/client/SseClientTransport 
 
 public final class io/modelcontextprotocol/kotlin/sdk/client/StdioClientTransport : io/modelcontextprotocol/kotlin/sdk/shared/AbstractClientTransport {
 	public static final field BUFFER_SIZE J
+	public fun <init> (Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSource;Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSink;)V
+	public fun <init> (Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSource;Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSink;Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSource;)V
+	public fun <init> (Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSource;Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSink;Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSource;Lkotlinx/coroutines/channels/Channel;)V
+	public fun <init> (Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSource;Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSink;Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSource;Lkotlinx/coroutines/channels/Channel;Lkotlin/jvm/functions/Function1;)V
+	public synthetic fun <init> (Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSource;Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSink;Lio/modelcontextprotocol/kotlin/sdk/client/CoroutineStdioSource;Lkotlinx/coroutines/channels/Channel;Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun <init> (Lkotlinx/io/Source;Lkotlinx/io/Sink;)V
 	public fun <init> (Lkotlinx/io/Source;Lkotlinx/io/Sink;Lkotlinx/io/Source;)V
 	public fun <init> (Lkotlinx/io/Source;Lkotlinx/io/Sink;Lkotlinx/io/Source;Lkotlinx/coroutines/channels/Channel;)V

@@ -40,7 +40,6 @@ import kotlinx.io.Sink
 import kotlinx.io.Source
 import kotlinx.io.buffered
 import kotlinx.io.readByteArray
-import kotlinx.io.writeString
 import kotlinx.serialization.SerializationException
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
@@ -85,12 +84,32 @@ import kotlin.jvm.JvmOverloads
  */
 @OptIn(ExperimentalAtomicApi::class)
 public class StdioClientTransport @JvmOverloads public constructor(
-    private val input: Source,
-    private val output: Sink,
-    private val error: Source? = null,
+    private val input: CoroutineStdioSource,
+    private val output: CoroutineStdioSink,
+    private val error: CoroutineStdioSource? = null,
     private val sendChannel: Channel<JSONRPCMessage> = Channel(Channel.BUFFERED),
     private val classifyStderr: (String) -> StderrSeverity = { DEBUG },
 ) : AbstractClientTransport() {
+
+    /**
+     * Creates a transport over blocking kotlinx-io streams.
+     *
+     * I/O runs on the SDK platform I/O dispatcher.
+     */
+    @JvmOverloads
+    public constructor(
+        input: Source,
+        output: Sink,
+        error: Source? = null,
+        sendChannel: Channel<JSONRPCMessage> = Channel(Channel.BUFFERED),
+        classifyStderr: (String) -> StderrSeverity = { DEBUG },
+    ) : this(
+        input = BlockingCoroutineStdioSource(input),
+        output = BlockingCoroutineStdioSink(output),
+        error = error?.let(::BlockingCoroutineStdioSource),
+        sendChannel = sendChannel,
+        classifyStderr = classifyStderr,
+    )
 
     override val logger: KLogger = KotlinLogging.logger {}
 
@@ -128,10 +147,18 @@ public class StdioClientTransport @JvmOverloads public constructor(
                 // Explicitly use ioCoroutineContext for I/O operations
                 writeJob = launch(ioCoroutineContext) {
                     logger.debug { "Write coroutine started." }
-                    output.buffered().use { sink ->
+                    try {
                         sendChannel.consumeEach { message ->
-                            sendOutboundMessage(message, sink, mainScope)
+                            sendOutboundMessage(message, output, mainScope)
                             yield() // Giving other coroutines a chance to run
+                        }
+                    } finally {
+                        withContext(NonCancellable) {
+                            try {
+                                output.close()
+                            } catch (failure: Throwable) {
+                                logger.debug(failure) { "Error closing stdout sink" }
+                            }
                         }
                     }
                 }
@@ -249,19 +276,31 @@ public class StdioClientTransport @JvmOverloads public constructor(
         }
     }
 
-    private fun closeReadSources() {
-        runCatching { input.close() }
-            .onFailure { logger.debug(it) { "Error closing stdin source" } }
+    private suspend fun closeReadSources() {
+        try {
+            input.close()
+        } catch (failure: Throwable) {
+            logger.debug(failure) { "Error closing stdin source" }
+        }
         error?.let { source ->
-            runCatching { source.close() }
-                .onFailure { logger.debug(it) { "Error closing stderr source" } }
+            try {
+                source.close()
+            } catch (failure: Throwable) {
+                logger.debug(failure) { "Error closing stderr source" }
+            }
         }
     }
 
-    private fun sendOutboundMessage(message: JSONRPCMessage, sink: Sink, mainScope: CoroutineScope) {
+    private suspend fun sendOutboundMessage(
+        message: JSONRPCMessage,
+        sink: CoroutineStdioSink,
+        mainScope: CoroutineScope,
+    ) {
         try {
             val json = serializeMessage(message)
-            sink.writeString(json)
+            val bytes = json.encodeToByteArray()
+            val buffer = Buffer().apply { write(bytes) }
+            sink.write(buffer, bytes.size.toLong())
             sink.flush()
         } catch (e: SerializationException) {
             logger.warn(e) { "Can't serialize message" }
@@ -293,35 +332,40 @@ public class StdioClientTransport @JvmOverloads public constructor(
 
     private suspend fun CoroutineScope.readSource(
         stream: ProcessStream,
-        source: Source,
+        source: CoroutineStdioSource,
         channel: ProducerScope<Event>,
         bytesConsumer: suspend (ByteArray) -> Unit,
     ) {
         val buffer = Buffer()
         try {
-            source.use {
-                while (isActive) {
-                    val bytesRead = source.readAtMostTo(buffer, BUFFER_SIZE)
-                    if (bytesRead == -1L) {
-                        logger.debug { "EOF reached in $stream" }
-                        channel.send(Event.EOFEvent(stream))
-                        break
-                    }
-
-                    if (bytesRead > 0L) {
-                        val bytes = buffer.readByteArray()
-                        buffer.clear()
-                        bytesConsumer.invoke(bytes)
-                    }
-
-                    yield() // Giving other coroutines a chance to run
+            while (isActive) {
+                val bytesRead = source.readAtMostTo(buffer, BUFFER_SIZE)
+                if (bytesRead == -1L) {
+                    logger.debug { "EOF reached in $stream" }
+                    channel.send(Event.EOFEvent(stream))
+                    break
                 }
+
+                if (bytesRead > 0L) {
+                    val bytes = buffer.readByteArray()
+                    buffer.clear()
+                    bytesConsumer.invoke(bytes)
+                }
+
+                yield() // Giving other coroutines a chance to run
             }
         } catch (exception: IOException) {
             logger.debug(exception) { "IOException while reading stream" }
             channel.send(Event.IOErrorEvent(stream, exception))
         } finally {
             buffer.clear()
+            withContext(NonCancellable) {
+                try {
+                    source.close()
+                } catch (failure: Throwable) {
+                    logger.debug(failure) { "Error closing $stream source" }
+                }
+            }
         }
     }
 
@@ -345,5 +389,29 @@ public class StdioClientTransport @JvmOverloads public constructor(
         data class IOErrorEvent(val stream: ProcessStream, val cause: Throwable) : Event {
             override fun toString(): String = "IOErrorEvent(stream=$stream, cause=${cause.message})"
         }
+    }
+}
+
+private class BlockingCoroutineStdioSource(private val delegate: Source) : CoroutineStdioSource {
+    override suspend fun readAtMostTo(sink: Buffer, byteCount: Long): Long = delegate.readAtMostTo(sink, byteCount)
+
+    override suspend fun close() {
+        delegate.close()
+    }
+}
+
+private class BlockingCoroutineStdioSink(output: Sink) : CoroutineStdioSink {
+    private val delegate: Sink = output.buffered()
+
+    override suspend fun write(source: Buffer, byteCount: Long) {
+        delegate.write(source, byteCount)
+    }
+
+    override suspend fun flush() {
+        delegate.flush()
+    }
+
+    override suspend fun close() {
+        delegate.close()
     }
 }
