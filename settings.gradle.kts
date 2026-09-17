@@ -1,4 +1,4 @@
-rootProject.name = "kotlin-sdk"
+rootProject.name = "kotlin-mcp-sdk"
 
 pluginManagement {
     repositories {
